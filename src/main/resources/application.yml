@@ -1,0 +1,8 @@
+spring:
+    data:
+        mongodb:
+            uri: mongodb://spidle:Luncert428@luncert.cn:27017/spidle
+    jpa:
+        show-sql: true
+        hibernate:
+            ddl-auto: CREATE
