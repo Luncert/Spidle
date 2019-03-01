@@ -24,9 +24,9 @@ public class TaskResult implements Serializable
     /**
      * 正文
      */
-    private Map<String, String> content;
+    private Map<Object, Object> content;
 
-    public TaskResult(String taskName, Map<String, String> content) {
+    public TaskResult(String taskName, Map<Object, Object> content) {
         this.taskName = taskName;
         this.content = content;
     }

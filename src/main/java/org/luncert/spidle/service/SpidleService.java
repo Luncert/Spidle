@@ -6,7 +6,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.Reader;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,9 +62,7 @@ public class SpidleService
         props.put("python.security.respectJavaAccessibility", "false");
         props.put("python.import.site", "false");
 
-        Properties preprops = System.getProperties();
-
-        PythonInterpreter.initialize(preprops, props, new String[0]);
+        PythonInterpreter.initialize(System.getProperties(), props, new String[0]);
     }
 
     @PreDestroy
@@ -131,24 +128,11 @@ public class SpidleService
                             interpreter.exec(task.getScripts());
                             task.setSuccessedTime(task.getSuccessedTime() + 1);
 
-                            // 从重定向的输出流bos中读出数据，解析成map
+                            // out: 从重定向的输出流bos中读出数据，解析成map
                             InputStream outStream = new ByteArrayInputStream(bos.toByteArray());
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(outStream));
-                            Map<String, String> resultMap = new HashMap<>();
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                int i = line.indexOf("=");
-                                if (i > 0) {
-                                    String key = line.substring(0, i).trim();
-                                    String value = line.substring(i + 1).trim();
-                                    resultMap.put(key, value);
-                                }
-                                else {
-                                    // TODO: log, invalid key-pair
-                                }
-                            }
-                            TaskResult taskResult = new TaskResult(task.getName(), resultMap);
-
+                            Properties props = new Properties();
+                            props.load(outStream);
+                            TaskResult taskResult = new TaskResult(task.getName(), props);
                             // 持久化任务输出
                             if (task.isPersistence()) {
                                 taskResultRepos.save(taskResult);

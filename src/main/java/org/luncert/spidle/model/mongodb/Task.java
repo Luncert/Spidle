@@ -57,6 +57,7 @@ public class Task implements Serializable
     private String scripts;
 
     private List<String> predecessors;
+    private List<String> successor;
 
     /**
      * 是否持久化输出
