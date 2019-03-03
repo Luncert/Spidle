@@ -27,14 +27,14 @@ public class TopologyContext {
                     sBoltCtx = new BoltContext(bolt);
                     boltCtxs.put(successorName, sBoltCtx);
                 }
-                boltCtx.getBoltOutput().attachDataInput(successorName, (i) -> {
-                    try {
-                        boltCtxs.get(successorName).getBoltInput().writePoint().write(i);
-                    } catch (IOException e) {
-                        // TODO:
-                        e.printStackTrace();
-                    }
-                });
+                // boltCtx.getBoltOutput().attachDataInput(successorName, (i) -> {
+                //     try {
+                //         boltCtxs.get(successorName).getBoltInput().writePoint().write(i);
+                //     } catch (IOException e) {
+                //         // TODO:
+                //         e.printStackTrace();
+                //     }
+                // });
             }
         }
     }

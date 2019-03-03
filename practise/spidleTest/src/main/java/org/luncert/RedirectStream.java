@@ -4,11 +4,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Consumer;
 
 public class RedirectStream {
 
@@ -16,21 +15,18 @@ public class RedirectStream {
     private final Condition condition = lock.newCondition();
 
     private boolean closed = false;
+    private boolean blocking;
     private byte[] buf;
     private int count;
     private int pos;
-    private Map<String, Consumer<Integer>> dataInputListener = new HashMap<>();
 
     public RedirectStream() {
+        this(false);
+    }
+
+    public RedirectStream(boolean blocking) {
+        this.blocking = blocking;
         buf = new byte[32];
-    }
-
-    public OutputStream writePoint() {
-        return new ByteOutputStream();
-    }
-
-    public InputStream readPoint() {
-        return new ByteInputStream();
     }
 
     private void ensureCapacity(int minCapacity) {
@@ -58,6 +54,22 @@ public class RedirectStream {
         return (minCapacity > MAX_ARRAY_SIZE) ? Integer.MAX_VALUE : MAX_ARRAY_SIZE;
     }
 
+    // interface
+
+    /**
+     * 获取一个OutputStream用于写入数据
+     */
+    public OutputStream writePoint() {
+        return new ByteOutputStream();
+    }
+
+    /**
+     * 获取一个InputStream用于读出数据
+     */
+    public InputStream readPoint() {
+        return new ByteInputStream();
+    }
+
     private class ByteOutputStream extends OutputStream {
 
         public void write(int b) throws IOException {
@@ -71,62 +83,108 @@ public class RedirectStream {
             buf[count] = (byte) b;
             count += 1;
             
-            condition.notifyAll();
+            condition.signalAll();
             lock.unlock();
 
-            for (Consumer<Integer> consumer : dataInputListener.values())
-                consumer.accept(b);
+            // 为了保证线程安全，直接获取一个数组而不是一个可迭代对象
+            for (Object rs : redirects.values().toArray()) {
+                ((OutputStream) rs).write(b);
+            }
         }
         
         public void close() throws IOException {
-            lock.lock();
-            closed = true;
-            lock.unlock();
+            RedirectStream.this.close();
         }
 
     }
 
     private class ByteInputStream extends InputStream {
 
+        /**
+         * @return 没有新数据可读时，且非阻塞时或者允许阻塞但stream已关闭时，
+         * 直接返回-1
+         */
         public int read() throws IOException {
             int ret = -1;
 
             lock.lock();
-            if (!closed) {
-                if (pos == count) {
-                    while (true) {
+            // pos == count代表当前无新数据可读
+            if (pos == count) {
+                // 允许阻塞时，才去等待condition，在不允许阻塞的情况下直接返回ret（即-1）
+                if (blocking) {
+                    while (!closed && pos == count) {
                         try {
                             condition.await();
+                            break;
                         } catch (InterruptedException e) {
-                            // if interruoted, continue to await
+                            // 等待被中断，重新等待
                         }
                     }
+                    // 有可能reader在writer关闭stream之前进入等待，所以，writer在关闭stream后要调用condition.signalAll唤醒所有在阻塞队列中的线程。而这时可能仍然没有新数据可读，所以这里要有pos < count的判断
+                    if (pos < count) {
+                        ret = buf[pos++] & 0xff;
+                    }
                 }
-                // assert pos < count;
-                ret = buf[pos++] & 0xff;
             }
+            else ret = buf[pos++] & 0xff;
             lock.unlock();
 
             return ret;
         }
         
         public void close() throws IOException {
-            lock.lock();
-            closed = true;
-            lock.unlock();
+            RedirectStream.this.close();
         }
 
     }
 
-    /**
-     * 监听数据流入
-     */
-    public void attachDataInput(String name, Consumer<Integer> consumer) {
-        dataInputListener.put(name, consumer);
+    private void close() throws IOException {
+        lock.lock();
+        closed = true;
+        condition.signalAll();
+        lock.unlock();
+
+        // 为了保证线程安全，直接获取一个数组而不是一个可迭代对象
+        for (Object rs : redirects.values().toArray()) {
+            ((OutputStream) rs).close();
+        }
     }
 
-    public void detachDataInput(String name) {
-        dataInputListener.remove(name);
+    // redirect
+
+    private ConcurrentMap<Integer, OutputStream> redirects = new ConcurrentHashMap<>();
+
+    /**
+     * 创建一个channel来重定向输出到另一个stream，
+     * 在该channel上的数据流动不会影响其他数据流
+     */
+    public Channel redirect(OutputStream os) {
+        int id = os.hashCode();
+        if (redirects.containsKey(id))
+            throw new RuntimeException("duplicate redirect to the same stream");
+        
+        redirects.put(id, os);
+        return new Channel(id);
+    }
+
+    public class Channel
+    {
+        private int id;
+        private boolean closed = false;
+
+        private Channel(int id) {
+            this.id = id;
+        }
+
+        /**
+         * 关闭重定向通道
+         */
+        public void close() {
+            if (!closed) {
+                redirects.remove(id);
+                closed = true;
+            }
+        }
     }
 
 }
