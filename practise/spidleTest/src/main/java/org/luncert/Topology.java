@@ -33,6 +33,7 @@ public class Topology
 
         public Bolt(boolean persistence, String scripts)
         {
+            name = CipherHelper.genUniqueName();
             this.persistence = persistence;
             this.scripts = scripts;
         }

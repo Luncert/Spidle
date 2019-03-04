@@ -1,6 +1,5 @@
 
 import time
 
-for i in range(50):
-    print('data %d' % i)
-    time.sleep(0.1)
+for i in range(20):
+    print(i)

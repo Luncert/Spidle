@@ -1,31 +1,23 @@
 package org.luncert;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.luncert.Topology.Bolt;
 import org.python.util.PythonInterpreter;
 
-/**
- * 流处理服务，将输出数据按时间片分组，每产生一个dataset就会启动相关的bolt去消费， 这样的话一个任务就不会要等到前置任务结束才启动
- */
 public class StreamingService {
 
-    private static final long INTERVAL = 100; // ms
-
     private ExecutorService threadPool = Executors.newCachedThreadPool();
-    private ScheduledExecutorService scheduledThreadPool = Executors.newScheduledThreadPool(50);
     private ConcurrentMap<String, Topology> topologies = new ConcurrentHashMap<>();
+    private ConcurrentMap<String, BoltContext> boltCtxs = new ConcurrentHashMap<>();
 
     public StreamingService() {
+        // 初始化Jython解释器
         String pythonHome = System.getenv().get("PYTHON_HOME");
         if (pythonHome == null) {
             throw new RuntimeException("Env variable PYTHONE_HOME is not defined");
@@ -49,58 +41,88 @@ public class StreamingService {
         topologies.put(topology.getName(), topology);
     }
 
+    /**
+     * 关于数据流动：
+     * 一个bolt往rsOut中print数据，由于redirect操作这些数据会被及时写入到
+     * 另一个bolt的rsIn中，然后由那个bolt主动从rsIn中读出数据
+     */
     public void start(String topologyName) throws Exception {
         Topology topology = topologies.get(topologyName);
-        if (topology == null)
+        if (topology == null) {
             throw new Exception("invalid topology name: " + topologyName);
-        for (Bolt bolt : topology.getBolts())
-            startBolt(bolt, null);
+        }
+        // 在启动之前，先要初始化每个bolt的输入输出流，并完成关联的bolt的数据流绑定
+        initTopology(topology);
+        // 启动
+        startTopology(topology);
     }
 
-    private void startBolt(Bolt bolt, final byte[] input) {
+    private void initTopology(Topology topology)
+    {
+        for (Bolt bolt : topology.getBolts()) {
+            BoltContext boltCtx = new BoltContext(bolt);
+            boltCtxs.put(bolt.getName(), boltCtx);
+            
+            for (Bolt successor : bolt.getSuccessors())
+                initSuccessor(successor, boltCtx);
+        }
+    }
+
+    private void initSuccessor(Bolt bolt, BoltContext preBoltCtx)
+    {
+        BoltContext boltCtx = new BoltContext(bolt);
+        boltCtxs.put(bolt.getName(), boltCtx);
+
+        preBoltCtx.rsOut.redirect(boltCtx.rsIn.writePoint());
+
+        for (Bolt successor : bolt.getSuccessors())
+            initSuccessor(successor, boltCtx);
+    }
+
+    private void startTopology(Topology topology)
+    {
+        for (Bolt headBolt : topology.getBolts()) {
+            startBolt(headBolt);
+        }
+    }
+
+    /**
+     * 启动bolt：启动Jython解释器执行脚本
+     */
+    private void startBolt(Bolt bolt)
+    {
+        BoltContext boltCtx = boltCtxs.get(bolt.getName());
         threadPool.submit(() -> {
             try (PythonInterpreter interpreter = new PythonInterpreter()) {
-                // 输入
-                if (input != null) {
-                    interpreter.setIn(new ByteArrayInputStream(input));
-                }
-
-                // 重定向标准输出流
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                interpreter.setOut(bos);
+                interpreter.setIn(boltCtx.rsIn.readPoint());
+                interpreter.setOut(boltCtx.rsOut.writePoint());
 
                 interpreter.exec(bolt.getScripts());
 
-                // 启动successors，将输出传递作为输入
-                List<Bolt> successors = bolt.getSuccessors();
-                if (!successors.isEmpty()) {
-                    // 创建一个定时任务，消费任务输出
-                    scheduledThreadPool.schedule(() -> {
-                        byte[] output = bos.toByteArray();
-                        System.out.println(System.currentTimeMillis());
-                        System.out.println(new String(output));
-                        if (output.length > 0) {
-                            for (Bolt sucessor : successors) {
-                                startBolt(sucessor, output);
-                            }
-                            // 任务输出还没有消费完，再创建一个定时任务
-                            scheduledThreadPool.schedule(() -> {
-                                byte[] output1 = bos.toByteArray();
-                                System.out.println(new String(output1));
-                                if (output.length > 0) {
-                                    for (Bolt sucessor : successors) {
-                                        startBolt(sucessor, output1);
-                                    }
-                                }
-                            }, INTERVAL, TimeUnit.MILLISECONDS);
-                        }
-                    }, INTERVAL, TimeUnit.MILLISECONDS);
-                } else System.out.println("Task Finished: " + new String(bos.toByteArray()));
+                boltCtx.rsIn.close();
+                boltCtx.rsOut.close();
+                
+                boltCtxs.remove(bolt.getName());
             } catch (Exception e) {
                 // TODO: log
                 e.printStackTrace();
             }
         });
+        // 在shutdown()执行后，老的任务会继续处理而不允许在提交新的任务。
+        for (Bolt successor : bolt.getSuccessors()) {
+            startBolt(successor);
+        }
+    }
+
+    private static class BoltContext
+    {
+        // Bolt bolt;
+        RedirectStream rsIn, rsOut;
+        BoltContext(Bolt bolt) {
+            // this.bolt = bolt;
+            rsIn = new RedirectStream(true);
+            rsOut = new RedirectStream(true);
+        }
     }
 
     public void stop(String topologyName) {
@@ -114,9 +136,6 @@ public class StreamingService {
     public void shutdown() throws InterruptedException {
         threadPool.shutdown();
         threadPool.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
-
-        scheduledThreadPool.shutdown();
-        scheduledThreadPool.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
     }
 
 }
