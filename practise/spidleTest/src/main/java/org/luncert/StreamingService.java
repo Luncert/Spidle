@@ -1,6 +1,5 @@
 package org.luncert;
 
-import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
@@ -8,29 +7,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.luncert.Topology.Bolt;
-import org.python.util.PythonInterpreter;
 
 public class StreamingService {
 
     private ExecutorService threadPool = Executors.newCachedThreadPool();
     private ConcurrentMap<String, Topology> topologies = new ConcurrentHashMap<>();
     private ConcurrentMap<String, BoltContext> boltCtxs = new ConcurrentHashMap<>();
-
-    public StreamingService() {
-        // 初始化Jython解释器
-        String pythonHome = System.getenv().get("PYTHON_HOME");
-        if (pythonHome == null) {
-            throw new RuntimeException("Env variable PYTHONE_HOME is not defined");
-        }
-
-        Properties props = new Properties();
-        props.put("python.home", pythonHome);
-        props.put("python.console.encoding", "UTF-8");
-        props.put("python.security.respectJavaAccessibility", "false");
-        props.put("python.import.site", "false");
-
-        PythonInterpreter.initialize(System.getProperties(), props, new String[0]);
-    }
 
     /**
      * 提交任务拓扑，topology name重复时抛出异常
@@ -93,20 +75,20 @@ public class StreamingService {
     {
         BoltContext boltCtx = boltCtxs.get(bolt.getName());
         threadPool.submit(() -> {
-            try (PythonInterpreter interpreter = new PythonInterpreter()) {
-                interpreter.setIn(boltCtx.rsIn.readPoint());
-                interpreter.setOut(boltCtx.rsOut.writePoint());
+            // try (PythonInterpreter interpreter = new PythonInterpreter()) {
+            //     interpreter.setIn(boltCtx.rsIn.readPoint());
+            //     interpreter.setOut(boltCtx.rsOut.writePoint());
 
-                interpreter.exec(bolt.getScripts());
+            //     interpreter.exec(bolt.getScripts());
 
-                boltCtx.rsIn.close();
-                boltCtx.rsOut.close();
+            //     boltCtx.rsIn.close();
+            //     boltCtx.rsOut.close();
                 
-                boltCtxs.remove(bolt.getName());
-            } catch (Exception e) {
-                // TODO: log
-                e.printStackTrace();
-            }
+            //     boltCtxs.remove(bolt.getName());
+            // } catch (Exception e) {
+            //     // TODO: log
+            //     e.printStackTrace();
+            // }
         });
         // 在shutdown()执行后，老的任务会继续处理而不允许在提交新的任务。
         for (Bolt successor : bolt.getSuccessors()) {

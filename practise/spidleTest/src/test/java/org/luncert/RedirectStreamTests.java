@@ -16,8 +16,6 @@ import java.util.concurrent.TimeUnit;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-import org.python.core.PySystemState;
-import org.python.util.PythonInterpreter;
 
 @RunWith(JUnit4.class)
 public class RedirectStreamTests {
@@ -84,53 +82,6 @@ public class RedirectStreamTests {
                 }
 
             } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
-
-        threadPool.shutdown();
-        threadPool.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
-    }
-
-    @Test
-    public void integrationTest() throws Exception
-    {
-        Properties props = new Properties();
-        props.put("python.home", System.getenv().get("PYTHON_HOME"));
-        props.put("python.console.encoding", "UTF-8");
-        props.put("python.security.respectJavaAccessibility", "false");
-        props.put("python.import.site", "false");
-        PythonInterpreter.initialize(System.getProperties(), props, new String[0]);
-
-        String script1 = new String(App.read(new FileInputStream("C:\\Users\\i507145\\Desktop\\Project\\Spidle\\practise\\spidleTest\\producer.py")));
-        String script2 = new String(App.read(new FileInputStream("C:\\Users\\i507145\\Desktop\\Project\\Spidle\\practise\\spidleTest\\consumer.py")));
-        
-        RedirectStream rs = new RedirectStream(true);
-
-        ExecutorService threadPool = Executors.newCachedThreadPool();
-
-        threadPool.submit(() -> {
-            try (PythonInterpreter interpreter = new PythonInterpreter()) {
-                interpreter.setOut(rs.writePoint());
-
-                interpreter.exec(script1);
-
-                rs.close();
-                System.out.println(interpreter.getSystemState().hashCode());
-                // System.out.println("stoped-1:" + new String(rs.buf));
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-
-        threadPool.submit(() -> {
-            try (PythonInterpreter interpreter = new PythonInterpreter()) {
-                interpreter.setIn(rs.readPoint());
-                // interpreter.setOut(System.err);
-                
-                interpreter.exec(script2);
-                System.out.println(interpreter.getSystemState().hashCode());
-            } catch (Exception e) {
                 e.printStackTrace();
             }
         });
